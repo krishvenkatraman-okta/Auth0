@@ -1,0 +1,131 @@
+/**
+* Handler that will be called during the execution of a PostLogin flow.
+* Author: Krish Venkatraman
+* @param {Event} event - Details about the user and the context in which they are logging in.
+* @param {PostLoginAPI} api - Interface whose methods can be used to change the behavior of the login.
+*/
+const axios = require("axios");
+exports.onExecutePostLogin = async (event, api) => 
+{
+  var statusCode="";
+  if (event.user.app_metadata.migrated == "true")  return;
+
+  
+  var headers = { 
+        "Authorization": event.secrets.apiKey,
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    };
+
+    const res = await axios.get(`${event.secrets.oktaorgUrl}/api/v1/users/${event.user.email}`,
+     {
+    headers: headers
+     })
+     .catch(function (error) {
+      if (error.response) {
+      statusCode = error.response.status; 
+    }});
+console.log(statusCode);
+ if (statusCode != "404")
+ {
+       api.user.setAppMetadata("firstName", res.data.profile.firstName);
+       api.user.setAppMetadata("lastName", res.data.profile.lastName);
+       api.user.setAppMetadata("migrated", "true");
+       const factor = await axios.get(`${event.secrets.oktaorgUrl}/api/v1/users/${res.data.id}/factors`, {
+       headers: headers
+    });
+    console.log(factor.data[0].factorType);
+        if(factor.data[0].factorType == "sms")
+      {
+          const tokenOptions = 
+      {
+           method: 'POST',
+           url: `${event.secrets.auth0Domain}/oauth/token`,
+           headers: {"content-type": "application/json" },
+         data: 
+         {
+            "grant_type": 'client_credentials',
+            "client_id": event.secrets.clientId,
+           "client_secret": event.secrets.clientSecret,
+           "audience": event.secrets.audience
+         }
+     };
+
+
+  const token = await axios.request(tokenOptions);
+  console.log('Access Token: ', token.data.access_token);
+  
+ console.log(event.user.user_id);
+ console.log(factor.data[0].profile.phoneNumber);
+  const usersOptions = 
+      {
+            method: 'POST',
+            url: `${event.secrets.auth0Domain}/api/v2/users/${event.user.user_id}/authenticators`,
+            headers: 
+            {
+              "Authorization": `Bearer ${token.data.access_token}`,
+              "content-type": "application/json"
+           },
+    data:
+    {
+          "type" : "phone",
+          "name" : "registered phone",
+          "phone_number" : factor.data[0].profile.phoneNumber,
+          "preferred_authentication_method": "sms"
+    }
+  };
+    const usersCreate = 
+      {
+            method: 'POST',
+            url: `${event.secrets.auth0Domain}/api/v2/users`,
+            headers: 
+            {
+              "Authorization": `Bearer ${token.data.access_token}`,
+              "content-type": "application/json"
+           },
+    data:
+    {
+          "connection":"sms",
+          "name": factor.data[0].profile.phoneNumber,
+          "nickname": factor.data[0].profile.phoneNumber,
+          "phone_number": factor.data[0].profile.phoneNumber,
+          "phone_verified": true
+    }
+      };
+      
+  const users = await axios.request(usersOptions)
+  const createSMSuser = await axios.request(usersCreate)
+         const usersLink = 
+      {
+            method: 'POST',
+            url: `${event.secrets.auth0Domain}/api/v2/users/${event.user.user_id}/identities`,
+            headers: 
+            {
+              "Authorization": `Bearer ${token.data.access_token}`,
+              "content-type": "application/json"
+           },
+    data:
+    {
+     
+      "provider": "sms",
+      "user_id": createSMSuser.data.user_id
+    
+    }
+      };
+ const linkUser = await axios.request(usersLink)
+      
+      }
+ }
+   
+};
+
+
+/**
+* Handler that will be invoked when this action is resuming after an external redirect. If your
+* onExecutePostLogin function does not perform a redirect, this function can be safely ignored.
+*
+* @param {Event} event - Details about the user and the context in which they are logging in.
+* @param {PostLoginAPI} api - Interface whose methods can be used to change the behavior of the login.
+*/
+// exports.onContinuePostLogin = async (event, api) => {
+// };
